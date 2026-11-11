@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { DecisionListItem, Entity, Repository } from '../types';
 import {
   fetchRepositoryDecisionHistory,
@@ -172,29 +172,40 @@ export function FileDecisionBriefView({ selectedRepo }: FileDecisionBriefViewPro
   const [historyReload, setHistoryReload] = useState(0);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const [historyError, setHistoryError] = useState<string | null>(null);
+  // Monotonic token so a slow, older search can never overwrite a newer one.
+  const searchSeqRef = useRef(0);
 
   useEffect(() => {
     const searchTerm = query.trim();
-    if (!repoId || !searchTerm) return;
+    const seq = searchSeqRef.current + 1;
+    searchSeqRef.current = seq;
+
+    if (!repoId || !searchTerm) {
+      setEntities([]);
+      setSearchedQuery('');
+      setSearchingQuery('');
+      setSearchError(null);
+      return;
+    }
 
     let cancelled = false;
     const timer = window.setTimeout(async () => {
       setSearchingQuery(searchTerm);
       try {
         const response = await searchRepositoryEntities(repoId, searchTerm);
-        if (!cancelled) {
+        if (!cancelled && seq === searchSeqRef.current) {
           setEntities(response.entities.filter((entity) => entity.type === 'File'));
           setSearchError(null);
           setSearchedQuery(searchTerm);
         }
       } catch (error) {
-        if (!cancelled) {
+        if (!cancelled && seq === searchSeqRef.current) {
           setEntities([]);
           setSearchError(error instanceof Error ? error.message : 'File search failed');
           setSearchedQuery(searchTerm);
         }
       } finally {
-        if (!cancelled) {
+        if (!cancelled && seq === searchSeqRef.current) {
           setSearchingQuery((current) => current === searchTerm ? '' : current);
         }
       }

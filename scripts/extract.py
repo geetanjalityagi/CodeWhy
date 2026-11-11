@@ -599,7 +599,6 @@ def run_extraction(args: argparse.Namespace, cache: SqliteCache) -> int:
     #: Candidate quotes dropped by verification, kept so a rejection is diagnosable.
     rejected_quote_count = 0
     failed_count = 0
-    stopped_for_budget = False
     sample_records: list[dict[str, Any]] = []
 
     def record_source_outcome(
@@ -671,7 +670,6 @@ def run_extraction(args: argparse.Namespace, cache: SqliteCache) -> int:
                 budget.total_tokens,
                 budget.max_tokens,
             )
-            stopped_for_budget = True
             break
         except ExtractionSchemaRejected as rejected:
             # A reply that is valid JSON but not the agreed shape. Recorded rather

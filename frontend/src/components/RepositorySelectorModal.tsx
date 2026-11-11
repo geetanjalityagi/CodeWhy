@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import type { Repository } from '../types';
 import { 
   GitBranch, 
@@ -25,6 +25,21 @@ interface LegacyRepositorySelectorModalProps {
 
 // Only show these two repos in the selector
 const ALLOWED_REPOS = ['urllib3/urllib3', 'sqlalchemy/alembic'];
+
+const FOCUSABLE_SELECTOR = [
+  'a[href]',
+  'button:not([disabled])',
+  'input:not([disabled])',
+  'select:not([disabled])',
+  'textarea:not([disabled])',
+  '[tabindex]:not([tabindex="-1"])',
+].join(',');
+
+function getFocusableElements(container: HTMLElement): HTMLElement[] {
+  return Array.from(container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter(
+    (element) => !element.hasAttribute('disabled') && element.getAttribute('aria-hidden') !== 'true',
+  );
+}
 
 export const LegacyRepositorySelectorModal: React.FC<LegacyRepositorySelectorModalProps> = ({
   isOpen,
@@ -283,6 +298,68 @@ export const RepositorySelectorModal: React.FC<RepositorySelectorModalProps> = (
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [activeTab, setActiveTab] = useState<'existing' | 'custom'>('existing');
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const onCloseRef = useRef(onClose);
+
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
+
+  // Dialog keyboard contract: trap Tab inside the modal, close on Escape, and
+  // hand focus back to the trigger when the dialog unmounts.
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const previouslyFocused = document.activeElement as HTMLElement | null;
+    const dialog = dialogRef.current;
+    if (dialog) {
+      const focusable = getFocusableElements(dialog);
+      (focusable[0] ?? dialog).focus();
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        onCloseRef.current();
+        return;
+      }
+      if (event.key !== 'Tab') return;
+
+      const node = dialogRef.current;
+      if (!node) return;
+
+      const focusable = getFocusableElements(node);
+      if (focusable.length === 0) {
+        event.preventDefault();
+        node.focus();
+        return;
+      }
+
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const active = document.activeElement;
+
+      if (event.shiftKey && (active === first || !node.contains(active))) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && (active === last || !node.contains(active))) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    document.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+      document.body.style.overflow = previousOverflow;
+      if (previouslyFocused && document.contains(previouslyFocused)) {
+        previouslyFocused.focus();
+      }
+    };
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
@@ -298,10 +375,19 @@ export const RepositorySelectorModal: React.FC<RepositorySelectorModalProps> = (
       <div 
         className="fixed inset-0 bg-black/70 transition-opacity"
         onClick={onClose}
+        aria-hidden="true"
       />
 
       {/* Modal Dialog */}
-      <div className="relative w-full max-w-2xl bg-[#fffdf8] border border-[#d7d2c6] rounded-lg shadow-xl overflow-hidden z-10 flex flex-col max-h-[85vh]">
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="repository-selector-title"
+        aria-describedby="repository-selector-description"
+        tabIndex={-1}
+        className="relative w-full max-w-2xl bg-[#fffdf8] border border-[#d7d2c6] rounded-lg shadow-xl overflow-hidden z-10 flex flex-col max-h-[85vh]"
+      >
         
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-[#d7d2c6] bg-[#fffdf8]">
@@ -310,13 +396,15 @@ export const RepositorySelectorModal: React.FC<RepositorySelectorModalProps> = (
               <GitBranch className="w-4 h-4" />
             </div>
             <div>
-              <h3 className="text-sm font-semibold text-[#292b25]">Select Target Repository</h3>
-              <p className="text-xs text-[#77776e]">Choose a repository to inspect architectural provenance</p>
+              <h3 id="repository-selector-title" className="text-sm font-semibold text-[#292b25]">Select Target Repository</h3>
+              <p id="repository-selector-description" className="text-xs text-[#77776e]">Choose a repository to inspect architectural provenance</p>
             </div>
           </div>
           <button
             onClick={onClose}
             className="p-1.5 text-[#77776e] hover:text-[#292b25] rounded hover:bg-[#efede5] transition-colors cursor-pointer"
+            aria-label="Close repository selector"
+            title="Close (Esc)"
           >
             <X className="w-4 h-4" />
           </button>
@@ -372,11 +460,22 @@ export const RepositorySelectorModal: React.FC<RepositorySelectorModalProps> = (
                   return (
                     <div
                       key={repo.id}
+                      role="button"
+                      tabIndex={0}
+                      aria-pressed={isSelected}
+                      aria-label={`${isSelected ? 'Selected repository' : 'Select repository'} ${repo.name}`}
                       onClick={() => {
                         onSelectRepo(repo);
                         onClose();
                       }}
-                      className={`group p-3.5 rounded border transition-colors cursor-pointer ${
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' || event.key === ' ' || event.key === 'Spacebar') {
+                          event.preventDefault();
+                          onSelectRepo(repo);
+                          onClose();
+                        }
+                      }}
+                      className={`group p-3.5 rounded border transition-colors cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#718d5e] ${
                         isSelected
                           ? 'bg-[#f5f3ed] border-[#718d5e]'
                           : 'bg-[#f5f3ed] border-[#d7d2c6] hover:border-[#bdb8ab]'
@@ -436,8 +535,10 @@ export const RepositorySelectorModal: React.FC<RepositorySelectorModalProps> = (
                             target="_blank"
                             rel="noopener noreferrer"
                             onClick={(e) => e.stopPropagation()}
+                            onKeyDown={(e) => e.stopPropagation()}
                             className="p-1.5 text-[#77776e] hover:text-[#292b25] hover:bg-[#efede5] rounded transition-colors flex-shrink-0"
                             title="Open repository in GitHub"
+                            aria-label={`Open ${repo.name} on GitHub`}
                           >
                             <ExternalLink className="w-3.5 h-3.5" />
                           </a>

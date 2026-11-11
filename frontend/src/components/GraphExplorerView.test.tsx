@@ -24,19 +24,41 @@ describe('GraphExplorerView visual refinement', () => {
     repositoryId: 'urllib3/urllib3',
     question: 'Why was SSL certificate validation enabled by default?',
     response: {
-      headline: 'SSL certificate verification was made mandatory to eliminate MITM vulnerabilities.',
-      confidence: { score: 0.94, level: 'high', reasoning: 'Explicit issue and commit records confirm default activation.' },
-      evidence: [],
+      outcome: 'full',
+      answer: 'SSL certificate verification was made mandatory to eliminate MITM vulnerabilities.',
       entity: {
         id: 'file:src/urllib3/util/ssl_.py',
         label: 'ssl_.py',
         type: 'File',
         path: 'src/urllib3/util/ssl_.py',
       },
+      confidence: {
+        score: 0.94,
+        label: 'HIGH',
+        signals: {
+          directness: 0.9,
+          provenance: 1,
+          agreement: 0.9,
+          relevance: 0.95,
+          temporal_consistency: 1,
+          contradiction: 0,
+        },
+      },
+      candidates: [],
+      decisions: [],
+      citations: [],
+      evidence_gaps: [],
+      who_to_ask: [],
+      fixture: false,
     },
   };
 
-  it('renders empty prompt when no question has been asked', () => {
+  it('loads the repository graph and its controls with no question asked', async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ nodes: [], edges: [], truncated: false, fixture: false }),
+    });
+
     render(
       <GraphExplorerView
         selectedRepo={mockRepo}
@@ -45,8 +67,10 @@ describe('GraphExplorerView visual refinement', () => {
       />
     );
     expect(screen.getByText('Connected Knowledge Graph')).toBeDefined();
-    expect(screen.getByText('Ask a question to explore its graph')).toBeDefined();
-    expect(screen.getByText('Go to Workspace')).toBeDefined();
+    expect(screen.queryByText('Ask a question to explore its graph')).toBeNull();
+    expect(screen.getByPlaceholderText('Search entities (e.g. retry, config)...')).toBeDefined();
+    expect(screen.getByText('Decisions')).toBeDefined();
+    expect(screen.getByText('Pull Requests')).toBeDefined();
   });
 
   it('renders header, legend and filter controls when question context is provided', () => {

@@ -550,6 +550,16 @@ def _load_sqlite_into_graph_source(source: "GraphDataSource", cfg: Settings) -> 
         log.warning("SQLITE_CACHE_PATH=%s does not exist; skipping SQLite load", cache_path)
         return
 
+    import os
+    import shutil
+    import tempfile
+
+    if os.environ.get("VERCEL") or not os.access(cache_path, os.W_OK) or not os.access(cache_path.parent, os.W_OK):
+        tmp_cache = _P(tempfile.gettempdir()) / f"codewhy_{cache_path.name}"
+        if not tmp_cache.exists() or tmp_cache.stat().st_size != cache_path.stat().st_size:
+            shutil.copyfile(cache_path, tmp_cache)
+        cache_path = tmp_cache
+
     import sqlite3
     try:
         con = sqlite3.connect(cache_path)

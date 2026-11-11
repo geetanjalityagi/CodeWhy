@@ -25,8 +25,6 @@
   },
   "devDependencies": {
     "@axe-core/react": "^4.10.2",
-    "@oxlint/binding-win32-x64-msvc": "1.89.0",
-    "@rolldown/binding-win32-x64-msvc": "1.2.15",
     "@testing-library/jest-dom": "^6.6.3",
     "@testing-library/react": "^16.1.0",
     "@testing-library/user-event": "^14.5.2",
@@ -40,5 +38,9 @@
     "typescript": "~6.0.3",
     "vite": "^8.3.4",
     "vitest": "^3.0.0"
+  },
+  "optionalDependencies": {
+    "@oxlint/binding-win32-x64-msvc": "1.89.0",
+    "@rolldown/binding-win32-x64-msvc": "1.2.15"
   }
 }

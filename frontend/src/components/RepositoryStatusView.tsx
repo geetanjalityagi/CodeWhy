@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import type {
   Repository,
   HealthResponse,
@@ -39,8 +39,20 @@ export const RepositoryStatusView: React.FC<RepositoryStatusViewProps> = ({
   const [dependencies, setDependencies] = useState<DependenciesResponse | null>(null);
   const [latencyMs, setLatencyMs] = useState<number>(0);
   const [isHealthOnline, setIsHealthOnline] = useState<boolean>(false);
-  const [lastPolledAt, setLastPolledAt] = useState<Date>(new Date());
+  const [lastPolledAt, setLastPolledAt] = useState<Date | null>(null);
+  const [hasPolled, setHasPolled] = useState<boolean>(false);
   const [isManualRefreshing, setIsManualRefreshing] = useState<boolean>(false);
+  const [pollError, setPollError] = useState<string | null>(null);
+  const isMountedRef = useRef(true);
+  const isPollingRef = useRef(false);
+
+  // Track mount state so a slow poll cannot update an unmounted page.
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
   // Determine repository ID from props or path URL
   const urlRepoId = typeof window !== 'undefined'
@@ -57,25 +69,41 @@ export const RepositoryStatusView: React.FC<RepositoryStatusViewProps> = ({
 
   // Load telemetry data from the three specified endpoints
   const pollTelemetry = useCallback(async () => {
-    // 1. GET /api/v1/health
-    const healthResult = await fetchHealth();
-    setHealth(healthResult.health);
-    setIsHealthOnline(healthResult.isConnected);
-    setLatencyMs(healthResult.latencyMs);
+    if (isPollingRef.current) return;
+    isPollingRef.current = true;
 
-    // 2. GET /api/v1/health/dependencies
-    const depResult = await fetchDependencies();
-    setDependencies(depResult);
+    try {
+      // 1. GET /api/v1/health
+      const healthResult = await fetchHealth();
+      if (!isMountedRef.current) return;
+      setHealth(healthResult.health);
+      setIsHealthOnline(healthResult.isConnected);
+      setLatencyMs(healthResult.latencyMs);
 
-    // 3. GET /api/v1/repositories/{id}
-    if (repoId) {
-      const repoResult = await fetchRepository(repoId);
-      if (repoResult) {
-        setRepoData(repoResult);
+      // 2. GET /api/v1/health/dependencies
+      const depResult = await fetchDependencies();
+      if (!isMountedRef.current) return;
+      setDependencies(depResult);
+
+      // 3. GET /api/v1/repositories/{id}
+      if (repoId) {
+        const repoResult = await fetchRepository(repoId);
+        if (!isMountedRef.current) return;
+        if (repoResult) {
+          setRepoData(repoResult);
+        }
       }
-    }
 
-    setLastPolledAt(new Date());
+      if (!isMountedRef.current) return;
+      setPollError(null);
+      setLastPolledAt(new Date());
+    } catch (err: unknown) {
+      if (!isMountedRef.current) return;
+      setPollError(err instanceof Error ? err.message : 'Telemetry poll failed');
+    } finally {
+      isPollingRef.current = false;
+      if (isMountedRef.current) setHasPolled(true);
+    }
   }, [repoId]);
 
   // Initial fetch and 30-second interval polling
@@ -91,14 +119,52 @@ export const RepositoryStatusView: React.FC<RepositoryStatusViewProps> = ({
 
   const handleManualRefresh = async () => {
     setIsManualRefreshing(true);
-    await pollTelemetry();
-    setIsManualRefreshing(false);
+    try {
+      await pollTelemetry();
+    } finally {
+      if (isMountedRef.current) setIsManualRefreshing(false);
+    }
   };
 
   // Determine graph / storage status
   const neo4jDep = dependencies?.services.find((s) => s.name.toLowerCase() === 'neo4j');
   const isGraphRemoteConfigured = neo4jDep?.status === 'configured';
   const activeDataSource = health?.data_source || dependencies?.data_source || 'sqlite';
+
+  // Derive every status label from real runtime state instead of asserting health.
+  const hasSuccessfulPoll = lastPolledAt !== null;
+  const pipelineStatus = pollError
+    ? 'Degraded'
+    : !hasPolled
+      ? 'Checking'
+      : isHealthOnline
+        ? 'Operational'
+        : 'Offline';
+  const pipelineStatusClass = pollError
+    ? 'bg-[#da3633]/15 text-[#f85149] border border-[#da3633]/30'
+    : !hasPolled
+      ? 'bg-[#181914] text-[#A5A69D] border border-[#292A23]'
+      : isHealthOnline
+        ? 'bg-[#2ea043]/15 text-[#3fb950] border border-[#2ea043]/30'
+        : 'bg-[#da3633]/15 text-[#f85149] border border-[#da3633]/30';
+  const queryAvailability = pollError
+    ? 'Unknown'
+    : !hasPolled
+      ? 'Checking…'
+      : isHealthOnline
+        ? 'Available'
+        : 'Unavailable';
+  const queryAvailabilityClass =
+    queryAvailability === 'Available'
+      ? 'text-[#3fb950]'
+      : queryAvailability === 'Checking…'
+        ? 'text-[#A5A69D]'
+        : 'text-[#f85149]';
+  const pollingLabel = pollError
+    ? 'Auto-poll retrying every 30s'
+    : hasSuccessfulPoll
+      ? 'Auto-poll active (30s)'
+      : 'Auto-poll scheduled (30s)';
 
   return (
     <div className="flex flex-col min-h-[calc(100vh-4rem)] bg-[#080907] w-full text-[#F5F3ED]">
@@ -115,21 +181,27 @@ export const RepositoryStatusView: React.FC<RepositoryStatusViewProps> = ({
                   <span>Repository Telemetry & Provenance Pipeline</span>
                   <span
                     className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-mono font-semibold ${
-                      isHealthOnline
-                        ? 'bg-[#2ea043]/15 text-[#3fb950] border border-[#2ea043]/30'
-                        : 'bg-[#da3633]/15 text-[#f85149] border border-[#da3633]/30'
+                      !hasPolled
+                        ? 'bg-[#181914] text-[#A5A69D] border border-[#292A23]'
+                        : isHealthOnline
+                          ? 'bg-[#2ea043]/15 text-[#3fb950] border border-[#2ea043]/30'
+                          : 'bg-[#da3633]/15 text-[#f85149] border border-[#da3633]/30'
                     }`}
                   >
                     <span
                       className={`w-1.5 h-1.5 rounded-full ${
-                        isHealthOnline ? 'bg-[#3fb950] animate-pulse' : 'bg-[#f85149]'
+                        !hasPolled
+                          ? 'bg-[#A5A69D]'
+                          : isHealthOnline
+                            ? 'bg-[#3fb950] animate-pulse'
+                            : 'bg-[#f85149]'
                       }`}
                     />
-                    {isHealthOnline ? 'Live API Online' : 'Service Offline'}
+                    {!hasPolled ? 'Checking API…' : isHealthOnline ? 'Live API Online' : 'Service Offline'}
                   </span>
                 </h1>
                 <p className="text-xs text-[#A5A69D] font-mono">
-                  Real-time pipeline telemetry polled every 30s • SQLite local backing • Exact contract schema
+                  Telemetry polled every 30s • Active source: {activeDataSource} • Exact contract schema
                 </p>
               </div>
             </div>
@@ -171,14 +243,32 @@ export const RepositoryStatusView: React.FC<RepositoryStatusViewProps> = ({
           <div className="flex items-center gap-4 text-[#A5A69D]">
             <span className="flex items-center gap-1.5">
               <Clock className="w-3.5 h-3.5 text-[#B9915E]" />
-              <span>Polled: {lastPolledAt.toLocaleTimeString()}</span>
+              <span>
+                {lastPolledAt
+                  ? `Last successful poll: ${lastPolledAt.toLocaleTimeString()}`
+                  : hasPolled
+                    ? 'No successful poll yet'
+                    : 'Awaiting first poll'}
+              </span>
             </span>
             <span className="px-2 py-0.5 rounded bg-[#080907] text-[#F5F3ED] border border-[#292A23]">
-              Latency: {latencyMs}ms
+              Latency: {hasSuccessfulPoll ? `${latencyMs}ms` : '—'}
             </span>
-            <span className="text-[#757F6C]">30s Auto-poll Active</span>
+            <span className="text-[#757F6C]">{pollingLabel}</span>
           </div>
         </div>
+
+        {pollError && (
+          <div
+            role="alert"
+            className="p-3.5 rounded-xl bg-[#12130F] border border-[#da3633]/40 text-[#f85149] text-xs font-mono flex items-start gap-2.5"
+          >
+            <XCircle className="w-4 h-4 shrink-0 mt-0.5" />
+            <span>
+              Telemetry poll failed: {pollError}. The values above are from the last successful poll.
+            </span>
+          </div>
+        )}
 
         {/* 1. PIPELINE OVERVIEW: Ingest → Extract → Graph */}
         <div className="space-y-4">
@@ -383,7 +473,7 @@ export const RepositoryStatusView: React.FC<RepositoryStatusViewProps> = ({
                       isGraphRemoteConfigured ? 'text-[#3fb950]' : 'text-[#e3b341]'
                     }`}
                   >
-                    {isGraphRemoteConfigured ? 'Neo4j Connected' : 'SQLite Local Mode'}
+                    {isGraphRemoteConfigured ? 'Neo4j Configured' : 'SQLite Local Mode'}
                   </span>
                 </div>
               </div>
@@ -400,8 +490,8 @@ export const RepositoryStatusView: React.FC<RepositoryStatusViewProps> = ({
                 Persistence & Storage Resilience (SQLite Local Fallback)
               </h3>
             </div>
-            <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-[#2ea043]/15 text-[#3fb950] border border-[#2ea043]/30 font-medium">
-              Operational
+            <span className={`text-[11px] font-mono px-2 py-0.5 rounded font-medium ${pipelineStatusClass}`}>
+              {pipelineStatus}
             </span>
           </div>
 
@@ -424,7 +514,9 @@ export const RepositoryStatusView: React.FC<RepositoryStatusViewProps> = ({
             </div>
             <div className="p-3 rounded-lg bg-[#080907] border border-[#292A23]">
               <span className="text-[#A5A69D] block text-[10px] uppercase font-mono">Query Availability</span>
-              <span className="text-[#3fb950] font-bold text-sm font-mono">Available</span>
+              <span className={`font-bold text-sm font-mono ${queryAvailabilityClass}`}>
+                {queryAvailability}
+              </span>
             </div>
           </div>
         </div>

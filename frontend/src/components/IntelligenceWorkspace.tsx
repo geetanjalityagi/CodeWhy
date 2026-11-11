@@ -27,6 +27,7 @@ import {
   ArrowRight,
   Terminal,
   Sparkles,
+  AlertCircle,
 } from 'lucide-react';
 
 interface IntelligenceWorkspaceProps {
@@ -48,11 +49,30 @@ export const IntelligenceWorkspace: React.FC<IntelligenceWorkspaceProps> = ({
   const [selectedDecisionId, setSelectedDecisionId] = useState<string | null>(null);
   const [selectedCitationId, setSelectedCitationId] = useState<string | null>(null);
   const [showConfidenceSignals, setShowConfidenceSignals] = useState(false);
-  const [copiedAnswer, setCopiedAnswer] = useState(false);
+  const [copiedAnswer, setCopiedAnswer] = useState<'idle' | 'copied' | 'failed'>('idle');
   const [isSuggestionsExpanded, setIsSuggestionsExpanded] = useState(false);
 
   const answerScrollRef = useRef<HTMLDivElement>(null);
+  const requestSeq = useRef(0);
+  const inFlightRef = useRef(false);
   const repoId = selectedRepo?.id || '';
+  const repoIdRef = useRef(repoId);
+
+  useEffect(() => {
+    repoIdRef.current = repoId;
+  }, [repoId]);
+
+  // Switching repositories invalidates every displayed or pending answer.
+  useEffect(() => {
+    requestSeq.current += 1;
+    inFlightRef.current = false;
+    setIsLoading(false);
+    setResponse(null);
+    setError(null);
+    setEntityId('');
+    setSelectedDecisionId(null);
+    setSelectedCitationId(null);
+  }, [repoId]);
 
   const isDemoRepo = selectedRepo?.fixture ?? false;
   const groundedQuestions = (selectedRepo && GROUNDED_DEMO_QUESTIONS[selectedRepo.id]) || [];
@@ -79,33 +99,54 @@ export const IntelligenceWorkspace: React.FC<IntelligenceWorkspaceProps> = ({
       setError('Please select a repository to investigate.');
       return;
     }
+    if (inFlightRef.current) return;
+
+    const seq = requestSeq.current + 1;
+    requestSeq.current = seq;
+    const requestRepoId = repoId;
+    const entityIdToSend = (entId !== undefined ? entId : entityId).trim() || undefined;
+    inFlightRef.current = true;
 
     setIsLoading(true);
     setError(null);
     setSelectedCitationId(null);
 
     try {
-      const res = await askQuestion(repoId, {
+      const res = await askQuestion(requestRepoId, {
         question: qToAsk,
-        entity_id: (entId !== undefined ? entId : entityId).trim() || undefined,
+        entity_id: entityIdToSend,
       });
+      // Drop the answer if another request started or the repository changed.
+      if (seq !== requestSeq.current || requestRepoId !== repoIdRef.current) return;
       setResponse(res);
       setQuestion(qToAsk);
       onQuestionAnswered(qToAsk, res);
     } catch (err: unknown) {
+      if (seq !== requestSeq.current || requestRepoId !== repoIdRef.current) return;
       const message = err instanceof Error ? err.message : 'Failed to query the decision archeology engine';
       setError(message);
       setResponse(null);
     } finally {
-      setIsLoading(false);
+      if (seq === requestSeq.current) {
+        inFlightRef.current = false;
+        setIsLoading(false);
+      }
     }
   };
 
-  const handleCopyAnswer = () => {
+  const handleCopyAnswer = async () => {
     if (!response?.answer) return;
-    navigator.clipboard.writeText(response.answer);
-    setCopiedAnswer(true);
-    setTimeout(() => setCopiedAnswer(false), 2000);
+    let nextState: 'copied' | 'failed' = 'copied';
+    try {
+      if (!navigator.clipboard?.writeText) {
+        throw new Error('Clipboard API unavailable');
+      }
+      await navigator.clipboard.writeText(response.answer);
+    } catch {
+      nextState = 'failed';
+    }
+    setCopiedAnswer(nextState);
+    window.setTimeout(() => setCopiedAnswer('idle'), 2500);
   };
 
   const handleSelectCitation = (citId: string | null) => {
@@ -260,10 +301,19 @@ export const IntelligenceWorkspace: React.FC<IntelligenceWorkspaceProps> = ({
                     <button
                       onClick={handleCopyAnswer}
                       className="px-2.5 py-1 rounded-md bg-[#080907] hover:bg-[#181914] border border-[#292A23] text-[#A5A69D] hover:text-[#F5F3ED] transition-colors flex items-center gap-1.5 text-xs font-mono cursor-pointer"
-                      title="Copy answer text"
+                      title={copiedAnswer === 'failed' ? 'Copy failed — clipboard access was blocked' : 'Copy answer text'}
+                      aria-label={copiedAnswer === 'failed' ? 'Copy failed' : 'Copy answer text'}
                     >
-                      {copiedAnswer ? <CheckCheck className="w-3.5 h-3.5 text-[#3fb950]" /> : <Copy className="w-3.5 h-3.5" />}
-                      <span>{copiedAnswer ? 'Copied' : 'Copy'}</span>
+                      {copiedAnswer === 'copied' ? (
+                        <CheckCheck className="w-3.5 h-3.5 text-[#3fb950]" />
+                      ) : copiedAnswer === 'failed' ? (
+                        <AlertCircle className="w-3.5 h-3.5 text-[#f85149]" />
+                      ) : (
+                        <Copy className="w-3.5 h-3.5" />
+                      )}
+                      <span aria-live="polite">
+                        {copiedAnswer === 'copied' ? 'Copied' : copiedAnswer === 'failed' ? 'Copy failed' : 'Copy'}
+                      </span>
                     </button>
                   </div>
 
@@ -312,9 +362,19 @@ export const IntelligenceWorkspace: React.FC<IntelligenceWorkspaceProps> = ({
                     <button
                       onClick={handleCopyAnswer}
                       className="px-2.5 py-1 rounded-md bg-[#080907] hover:bg-[#181914] border border-[#292A23] text-[#A5A69D] hover:text-[#F5F3ED] transition-colors flex items-center gap-1.5 text-xs font-mono cursor-pointer"
+                      title={copiedAnswer === 'failed' ? 'Copy failed — clipboard access was blocked' : 'Copy answer text'}
+                      aria-label={copiedAnswer === 'failed' ? 'Copy failed' : 'Copy answer text'}
                     >
-                      {copiedAnswer ? <CheckCheck className="w-3.5 h-3.5 text-[#3fb950]" /> : <Copy className="w-3.5 h-3.5" />}
-                      <span>{copiedAnswer ? 'Copied' : 'Copy'}</span>
+                      {copiedAnswer === 'copied' ? (
+                        <CheckCheck className="w-3.5 h-3.5 text-[#3fb950]" />
+                      ) : copiedAnswer === 'failed' ? (
+                        <AlertCircle className="w-3.5 h-3.5 text-[#f85149]" />
+                      ) : (
+                        <Copy className="w-3.5 h-3.5" />
+                      )}
+                      <span aria-live="polite">
+                        {copiedAnswer === 'copied' ? 'Copied' : copiedAnswer === 'failed' ? 'Copy failed' : 'Copy'}
+                      </span>
                     </button>
                   </div>
 

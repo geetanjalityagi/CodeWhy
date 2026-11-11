@@ -162,7 +162,7 @@ export function App() {
           }
           setCurrentTab('home');
         }
-      } catch (err) {
+      } catch {
         setRepoLoadError('The API is not reachable. Check that the backend is running.');
       }
     }

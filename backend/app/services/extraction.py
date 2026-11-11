@@ -12,7 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 EMAIL_SHAPED = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 
-from app.prompts.extract_decision import build_extraction_prompt, detect_injection_attempt
+from app.prompts.extract_decision import build_extraction_prompt
 from app.providers.llm_provider import BaseLLMProvider, LLMSchemaValidationError
 from app.schemas.common import DecisionState
 from app.services.quote_check import (

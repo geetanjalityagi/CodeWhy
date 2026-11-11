@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Final, Literal
 from app.schemas.common import ConfidenceLabel
 
 if TYPE_CHECKING:
-    from app.schemas.confidence import ConfidenceScore, ConfidenceSignals
+    from app.schemas.confidence import ConfidenceScore
 
 HIGH_THRESHOLD: Final[float] = 0.75
 MEDIUM_THRESHOLD: Final[float] = 0.50

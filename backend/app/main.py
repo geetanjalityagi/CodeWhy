@@ -1,7 +1,20 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+import os
+from pathlib import Path
+import sys
 from typing import Optional
+
+_BACKEND_DIR = str(Path(__file__).resolve().parent.parent)
+if _BACKEND_DIR not in sys.path:
+    sys.path.insert(0, _BACKEND_DIR)
+
+if os.environ.get("VERCEL"):
+    os.environ.setdefault("DATA_SOURCE", "graph")
+    os.environ.setdefault("SQLITE_CACHE_PATH", "data/ingest.sqlite3")
+    os.environ.setdefault("ALLOW_MOCK_PROVIDERS", "true")
+    os.environ.setdefault("OFFLINE", "true")
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -81,6 +94,14 @@ async def _lifespan(application: FastAPI):
         if _deps._DATA_SOURCE is None:
             _deps._DATA_SOURCE = get_data_source(cfg)
             log.info("Data source initialised: %s", type(_deps._DATA_SOURCE).__name__)
+        if not cfg.offline and cfg.data_source == "graph":
+            try:
+                from app.providers.embeddings import get_embedding_provider
+                provider = get_embedding_provider(cfg=cfg)
+                provider.embed_text("warmup")
+                log.info("Embedding provider pre-warmed: %s", type(provider).__name__)
+            except Exception as emb_exc:  # noqa: BLE001
+                log.warning("Embedding pre-warm skipped or failed: %s", emb_exc)
     except Exception as exc:  # noqa: BLE001
         log.error("Startup data source init failed: %s", exc)
     yield
@@ -108,7 +129,7 @@ def create_app(config: Optional[Settings] = None) -> FastAPI:
     application.add_middleware(
         CORSMiddleware,
         allow_origins=FRONTEND_ORIGINS,
-        allow_origin_regex=r"^(http://(localhost|127\.0\.0\.1)(:\d+)?|https://.*\.onrender\.com)$",
+        allow_origin_regex=r"^(http://(localhost|127\.0\.0\.1)(:\d+)?|https://.*\.onrender\.com|https://.*\.vercel\.app)$",
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],

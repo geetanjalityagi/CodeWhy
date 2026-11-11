@@ -82,15 +82,6 @@ class LLMNonRetryableError(LLMProviderError):
         self.status_code = status_code
 
 
-def _parses_as_json(text: str) -> bool:
-    """Whether the reply is JSON at all, as opposed to prose."""
-    try:
-        json.loads((text or "").strip())
-    except (ValueError, TypeError):
-        return False
-    return True
-
-
 def _describe_validation_failure(errors: Any) -> str:
     """A short phrase naming the mismatch, with no values from the reply."""
     entries = errors if isinstance(errors, list) else [{"loc": (), "type": str(errors)}]
@@ -184,7 +175,6 @@ class TokenBudget:
         """Records token usage and raises TokenBudgetExhaustedError if the limit is exceeded."""
         requested = prompt_tokens + completion_tokens
         if self.total_tokens + requested > self.max_tokens:
-            used_before = self.total_tokens
             # Still record what we tried to consume for auditability
             self.prompt_tokens += prompt_tokens
             self.completion_tokens += completion_tokens
@@ -397,18 +387,6 @@ class MockLLMProvider(BaseLLMProvider):
 
     #: Recorded so a test can assert which response_format was asked for.
     requested_json_schema: Optional[dict[str, Any]] = None
-
-    def complete(
-        self,
-        prompt: str,
-        system: Optional[str] = None,
-        temperature: float = 0.0,
-        max_tokens: int = 2048,
-        response_json_schema: Optional[dict[str, Any]] = None,
-    ) -> LLMResponse:
-        self.call_history.append({"prompt": prompt, "system": system})
-        if response_json_schema is not None:
-            self.requested_json_schema = response_json_schema
 
     def __init__(
         self,

@@ -8,6 +8,7 @@ build/
 .env
 data/*
 !data/.gitkeep
+!data/ingest.sqlite3
 .superpowers/
 docs/superpowers/
 review/decisions_sample.md

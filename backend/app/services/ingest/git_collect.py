@@ -329,8 +329,6 @@ def collect_documents(
     *,
     head_sha: str,
 ) -> list[CollectedDocument]:
-    import hashlib
-
     wanted = list(dict.fromkeys(list(DEFAULT_DOC_DIRS) + list(dirs)))
     documents: list[CollectedDocument] = []
     for name in sorted(path for path in clone.iterdir() if path.is_file()):

@@ -299,7 +299,6 @@ def assess_pr_noise(
     """
     result = NoiseResult(record_id=pr_id, is_revert_target=is_revert_target)
     clean_title = (title or "").strip()
-    clean_body = body or ""
 
     if _is_bot_author(author_login, author_email):
         result.add(NoiseReason.BOT_AUTHOR, detail=f"author={author_login!r}")
@@ -343,7 +342,6 @@ def assess_commit_noise(
     """
     result = NoiseResult(record_id=commit_id, is_revert_target=is_revert_target)
     clean_subject = (subject or "").strip()
-    clean_body = body or ""
 
     if _is_bot_author(None, author_email):
         result.add(NoiseReason.BOT_AUTHOR, detail=f"email={author_email!r}")

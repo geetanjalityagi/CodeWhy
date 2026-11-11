@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import type { Repository, Decision, DecisionListItem, DecisionState, QuestionContext } from '../types';
-import { fetchRepositoryDecisions } from '../services/api';
+import { fetchRepositoryDecisionHistory, fetchRepositoryDecisions } from '../services/api';
 import { DecisionDrawer } from './DecisionDrawer';
 import {
   Layers,
@@ -61,7 +61,7 @@ export const DecisionHistoryView: React.FC<DecisionHistoryViewProps> = ({
     let cancelled = false;
     setError(null);
 
-    if (!activeQuestion) {
+    if (!repoId) {
       setAllDecisions([]);
       setIsLoading(false);
       return () => {
@@ -70,32 +70,48 @@ export const DecisionHistoryView: React.FC<DecisionHistoryViewProps> = ({
     }
 
     setIsLoading(true);
-    const entityId = activeQuestion.response.entity?.id;
-    const decisions = entityId
-      ? fetchRepositoryDecisions(repoId, { entity_id: entityId, limit: 200 }).then((data) => data.items)
-      : Promise.resolve(
-          activeQuestion.response.decisions.map(
-            (decision: Decision): DecisionListItem => ({
-              id: decision.id,
-              summary: decision.summary,
-              state: decision.state,
-              date: decision.effective_at,
-              source_url: decision.source.url,
-              entities: [],
-              supersedes: decision.supersedes,
-              superseded_by: decision.superseded_by,
-              rule: decision.rule,
-            })
-          )
-        );
 
-    decisions
+    const load = async (): Promise<DecisionListItem[]> => {
+      // No question yet: fall back to the full repository history.
+      if (!activeQuestion) {
+        const data = await fetchRepositoryDecisionHistory(repoId);
+        return data.items;
+      }
+
+      const entityId = activeQuestion.response.entity?.id;
+      if (entityId) {
+        const data = await fetchRepositoryDecisions(repoId, { entity_id: entityId, limit: 200 });
+        return data.items;
+      }
+
+      return activeQuestion.response.decisions.map(
+        (decision: Decision): DecisionListItem => ({
+          id: decision.id,
+          summary: decision.summary,
+          state: decision.state,
+          date: decision.effective_at,
+          source_url: decision.source.url,
+          entities: [],
+          supersedes: decision.supersedes,
+          superseded_by: decision.superseded_by,
+          rule: decision.rule,
+        })
+      );
+    };
+
+    load()
       .then((items) => {
         if (!cancelled) setAllDecisions(items);
       })
       .catch((err: unknown) => {
         if (cancelled) return;
-        setError(err instanceof Error ? err.message : 'Failed to load question-related decision history');
+        setError(
+          err instanceof Error
+            ? err.message
+            : activeQuestion
+              ? 'Failed to load question-related decision history'
+              : 'Failed to load repository decision history'
+        );
         setAllDecisions([]);
       })
       .finally(() => {
@@ -146,25 +162,45 @@ export const DecisionHistoryView: React.FC<DecisionHistoryViewProps> = ({
       </div>
 
       <div className="flex-1 p-4 sm:p-6 max-w-5xl mx-auto w-full space-y-4">
-        {activeQuestion && (
+        {repoId && (
           <>
-            {/* Scoped Question Header */}
-            <div className="p-4 rounded-xl bg-[#12130F] border border-[#292A23] space-y-2 shadow-sm">
-              <span className="text-[10px] font-mono uppercase tracking-wider text-[#A5A69D] font-semibold">
-                History Scoped by Question:
-              </span>
-              <p className="text-xs sm:text-sm font-sans font-medium text-[#F5F3ED] leading-snug">
-                "{activeQuestion.question}"
-              </p>
-              {activeQuestion.response.entity && (
-                <div className="flex items-center gap-2 pt-0.5 text-xs font-mono text-[#A5A69D]">
-                  <span>Target Entity:</span>
-                  <span className="px-2 py-0.5 rounded bg-[#080907] border border-[#292A23] text-[#757F6C] font-mono text-[11px]">
-                    {activeQuestion.response.entity.label}
-                  </span>
+            {/* Scoped Question Header, or the repo-wide default */}
+            {activeQuestion ? (
+              <div className="p-4 rounded-xl bg-[#12130F] border border-[#292A23] space-y-2 shadow-sm">
+                <span className="text-[10px] font-mono uppercase tracking-wider text-[#A5A69D] font-semibold">
+                  History Scoped by Question:
+                </span>
+                <p className="text-xs sm:text-sm font-sans font-medium text-[#F5F3ED] leading-snug">
+                  "{activeQuestion.question}"
+                </p>
+                {activeQuestion.response.entity && (
+                  <div className="flex items-center gap-2 pt-0.5 text-xs font-mono text-[#A5A69D]">
+                    <span>Target Entity:</span>
+                    <span className="px-2 py-0.5 rounded bg-[#080907] border border-[#292A23] text-[#757F6C] font-mono text-[11px]">
+                      {activeQuestion.response.entity.label}
+                    </span>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="p-3.5 rounded-xl bg-[#12130F] border border-[#292A23] text-xs font-mono text-[#A5A69D] flex items-start gap-2.5 shadow-sm">
+                <Layers className="w-4 h-4 text-[#B9915E] shrink-0 mt-0.5" />
+                <div className="space-y-1.5">
+                  <p className="leading-relaxed">
+                    Showing every decision recorded for{' '}
+                    <span className="text-[#F5F3ED]">{selectedRepo?.name || repoId}</span>. Ask a question in the
+                    Workspace to narrow the history to one entity.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={onAskQuestion}
+                    className="text-[#B9915E] hover:text-[#C9A776] transition-colors cursor-pointer"
+                  >
+                    Ask about this repository →
+                  </button>
                 </div>
-              )}
-            </div>
+              </div>
+            )}
 
             {/* Filters Bar */}
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -235,25 +271,8 @@ export const DecisionHistoryView: React.FC<DecisionHistoryViewProps> = ({
           </>
         )}
 
-        {!activeQuestion && (
-          <div className="p-8 rounded-xl bg-[#12130F] border border-[#292A23] text-center space-y-3">
-            <Layers className="w-8 h-8 text-[#8C806F] mx-auto" />
-            <h3 className="text-sm font-semibold text-[#F5F3ED]">Ask a question to inspect decision history</h3>
-            <p className="text-xs font-mono text-[#A5A69D] max-w-sm mx-auto">
-              Decision history is scoped to the entity and governing decisions discovered in your investigation.
-            </p>
-            <button
-              type="button"
-              onClick={onAskQuestion}
-              className="px-4 py-2 rounded-lg bg-[#757F6C] hover:bg-[#8C806F] text-[#080907] text-xs font-semibold transition-colors cursor-pointer"
-            >
-              Open Workspace
-            </button>
-          </div>
-        )}
-
         {/* Loading State */}
-        {activeQuestion && isLoading && (
+        {isLoading && (
           <div className="py-16 flex flex-col items-center justify-center text-[#A5A69D] gap-2">
             <Loader2 className="w-6 h-6 animate-spin text-[#757F6C]" />
             <p className="text-xs font-mono">Fetching chronological decision records...</p>
@@ -261,7 +280,7 @@ export const DecisionHistoryView: React.FC<DecisionHistoryViewProps> = ({
         )}
 
         {/* Error State */}
-        {activeQuestion && error && (
+        {!isLoading && error && (
           <div className="p-4 rounded-xl bg-[#12130F] border border-[#da3633]/40 text-[#f85149] space-y-1">
             <div className="flex items-center gap-2 font-medium text-xs">
               <AlertCircle className="w-4 h-4 text-[#f85149]" />
@@ -272,18 +291,22 @@ export const DecisionHistoryView: React.FC<DecisionHistoryViewProps> = ({
         )}
 
         {/* Empty State */}
-        {activeQuestion && !isLoading && !error && displayedDecisions.length === 0 && (
+        {!isLoading && !error && displayedDecisions.length === 0 && (
           <div className="p-8 rounded-xl bg-[#12130F] border border-[#292A23] text-center space-y-2">
             <Layers className="w-6 h-6 text-[#8C806F] mx-auto" />
-            <h3 className="text-sm font-semibold text-[#F5F3ED]">No decisions match filters</h3>
+            <h3 className="text-sm font-semibold text-[#F5F3ED]">
+              {allDecisions.length === 0 ? 'No decisions recorded' : 'No decisions match filters'}
+            </h3>
             <p className="text-xs font-mono text-[#A5A69D]">
-              No decisions match the current state or entity filter for this repository.
+              {allDecisions.length === 0
+                ? 'This repository has no recorded decisions yet.'
+                : 'No decisions match the current state or entity filter for this repository.'}
             </p>
           </div>
         )}
 
         {/* Chronological Decisions List */}
-        {activeQuestion && !isLoading && !error && displayedDecisions.length > 0 && (
+        {!isLoading && !error && displayedDecisions.length > 0 && (
           <div className="relative pl-6 space-y-3">
             {/* Visual Spine */}
             <div className="absolute left-2.5 top-4 bottom-4 w-px bg-[#292A23] pointer-events-none" />

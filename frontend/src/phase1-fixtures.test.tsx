@@ -335,8 +335,8 @@ describe('Phase 1 Grounded Fixture Tests', () => {
           ...refusalUnknownFileFixture,
           entity: {
             id: 'ent_dummy',
-            type: 'file',
-            name: 'src/urllib3/poolmanager.py',
+            type: 'File',
+            label: 'src/urllib3/poolmanager.py',
             path: 'src/urllib3/poolmanager.py',
           },
           decisions: [],

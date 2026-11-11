@@ -19,7 +19,7 @@ from app.schemas.common import (
     SourceType,
 )
 from app.schemas.confidence import ConfidenceScore, ConfidenceSignals
-from app.schemas.decisions import Citation, Decision, SourceRef, WhoToAsk
+from app.schemas.decisions import Citation, Decision, SourceRef
 from app.schemas.entities import Candidate, Entity
 from app.prompts.extract_decision import (
     DATA_CLOSE_DELIMITER,
@@ -28,7 +28,7 @@ from app.prompts.extract_decision import (
 )
 from app.services.confidence import calculate_confidence
 from app.services.errors import DataSourceError
-from app.services.entity_resolution import ResolutionOutcome, ResolutionResult
+from app.services.entity_resolution import ResolutionResult
 from app.services.gate import GateOutcome, evaluate_refusal_gate
 from app.services.quote_check import verify_quote
 from app.services.retrieval import EvidenceBundle, RetrievedEvidenceItem

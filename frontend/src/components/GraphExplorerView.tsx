@@ -56,6 +56,7 @@ import {
   EyeOff,
   Database,
   GitBranch,
+  Loader2,
 } from 'lucide-react';
 
 const NODE_WIDTH = 280;
@@ -350,11 +351,9 @@ export const GraphExplorerView: React.FC<GraphExplorerViewProps> = ({
   const [isGraphOffline, setIsGraphOffline] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  // Active focal entity (if bounded subgraph)
-  const [focusSelection, setFocusSelection] = useState<{
-    questionContext: QuestionContext;
-    entityId: string;
-  } | null>(null);
+  // Focused entity for a bounded subgraph; null shows the whole repository graph.
+  const [focusEntityId, setFocusEntityId] = useState<string | null>(null);
+  const [reloadToken, setReloadToken] = useState(0);
 
   // Search input for entities
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -389,18 +388,13 @@ export const GraphExplorerView: React.FC<GraphExplorerViewProps> = ({
     : null;
   const repoId = selectedRepo?.id || (urlMatch ? decodeURIComponent(urlMatch[1]) : '');
   const activeQuestion = questionContext?.repositoryId === repoId ? questionContext : null;
-  const focusEntityId = activeQuestion
-    ? focusSelection?.questionContext === activeQuestion
-      ? focusSelection.entityId
-      : activeQuestion.response.entity?.id ?? null
-    : null;
-  const setFocusEntityId = (entityId: string | null) => {
-    if (entityId && activeQuestion) {
-      setFocusSelection({ questionContext: activeQuestion, entityId });
-    } else {
-      setFocusSelection(null);
-    }
-  };
+  const questionEntityId = activeQuestion?.response.entity?.id ?? null;
+
+  // A new question moves the focus to its entity; a repo switch clears it.
+  useEffect(() => {
+    setFocusEntityId(questionEntityId);
+    setSelectedNode(null);
+  }, [questionEntityId, repoId]);
 
   // Load graph data
   const loadGraph = useCallback(async (targetRepoId: string, focalEntity?: string | null) => {
@@ -439,16 +433,9 @@ export const GraphExplorerView: React.FC<GraphExplorerViewProps> = ({
     setIsLoading(false);
   }, [simulateOffline, simulateTruncated]);
 
-  // Load only the focused subgraph associated with the latest question.
+  // Load the focused subgraph, or the repo-wide graph when nothing is focused.
   useEffect(() => {
-    if (!activeQuestion) {
-      setGraphData(null);
-      setIsGraphOffline(false);
-      setErrorMessage(null);
-      setIsLoading(false);
-      return;
-    }
-    if (!focusEntityId) {
+    if (!repoId) {
       setGraphData(null);
       setIsGraphOffline(false);
       setErrorMessage(null);
@@ -456,7 +443,7 @@ export const GraphExplorerView: React.FC<GraphExplorerViewProps> = ({
       return;
     }
     loadGraph(repoId, focusEntityId);
-  }, [repoId, activeQuestion, focusEntityId, loadGraph]);
+  }, [repoId, focusEntityId, reloadToken, loadGraph]);
 
   // Debounced search for entities via GET /api/v1/repositories/{id}/entities?q=...
   useEffect(() => {
@@ -635,7 +622,7 @@ export const GraphExplorerView: React.FC<GraphExplorerViewProps> = ({
                 <span>Connected Knowledge Graph</span>
                 {isLoading ? (
                   <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-[#757F6C]/15 text-[#757F6C] border border-[#757F6C]/30 animate-pulse">
-                    Querying Subgraph...
+                    Loading graph...
                   </span>
                 ) : graphData ? (
                   <span className="text-xs font-mono px-2.5 py-0.5 rounded-full bg-[#12130F] border border-[#292A23] text-[#A5A69D]">
@@ -646,8 +633,6 @@ export const GraphExplorerView: React.FC<GraphExplorerViewProps> = ({
             </div>
           </div>
 
-          {activeQuestion && (
-          <>
           {/* Center: Search Entities autocomplete (GET /api/v1/repositories/{id}/entities) */}
           <div className="relative w-full sm:w-72 lg:w-96">
             <div className="relative">
@@ -746,24 +731,33 @@ export const GraphExplorerView: React.FC<GraphExplorerViewProps> = ({
               </button>
             </div>
 
-            {/* Clear Entity Focus Button */}
-            {focusEntityId && (
+            {/* Ask about this repository, when no question is loaded */}
+            {!activeQuestion && (
               <button
-                onClick={() => setFocusEntityId(null)}
+                onClick={onAskQuestion}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-[#12130F] hover:bg-[#1A1813] text-[#A5A69D] hover:text-[#F5F3ED] border border-[#292A23] text-xs font-mono transition-colors cursor-pointer"
+                title="Open the workspace to ask a question"
+              >
+                <Search className="w-3 h-3" />
+                <span>Ask a question</span>
+              </button>
+            )}
+
+            {/* Clear Entity Focus Button */}
+            {focusEntityId && focusEntityId !== questionEntityId && (
+              <button
+                onClick={() => setFocusEntityId(questionEntityId)}
                 className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-[#12130F] hover:bg-[#1A1813] text-[#B9915E] border border-[#B9915E]/35 text-xs font-mono transition-colors cursor-pointer"
-                title="Return to the entity from the latest question"
+                title={questionEntityId ? 'Return to the entity from the latest question' : 'Return to the full repository graph'}
               >
                 <RotateCcw className="w-3 h-3" />
-                <span>Question Entity</span>
+                <span>{questionEntityId ? 'Question Entity' : 'Full Graph'}</span>
               </button>
             )}
           </div>
-          </>
-          )}
         </div>
 
         {/* Node Type Filter Chips Bar */}
-        {activeQuestion && (
         <div className="flex flex-wrap items-center gap-2 pt-3 border-t border-[#292A23] mt-3 text-xs font-mono">
           <span className="text-[10px] text-[#A5A69D] uppercase tracking-wider flex items-center gap-1 mr-1">
             <Filter className="w-3 h-3 text-[#B9915E]" /> Filters:
@@ -873,7 +867,6 @@ export const GraphExplorerView: React.FC<GraphExplorerViewProps> = ({
           </div>
         )}
         </div>
-        )}
       </div>
 
       {/* Truncated Subgraph Notice Banner */}
@@ -898,7 +891,7 @@ export const GraphExplorerView: React.FC<GraphExplorerViewProps> = ({
         </div>
       )}
 
-      {activeQuestion && focusEntityId && !isGraphOffline && !errorMessage && viewMode === 'graph' && (
+      {!isGraphOffline && !errorMessage && viewMode === 'graph' && graphData && (
         <div className="shrink-0 border-b border-[#292A23] bg-[#0B0C09]/90 px-4 py-2">
           <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-[10px] font-mono text-[#A5A69D]">
             <span className="uppercase font-bold tracking-wider text-[#F5F3ED]">Legend</span>
@@ -941,43 +934,12 @@ export const GraphExplorerView: React.FC<GraphExplorerViewProps> = ({
       {/* Main Content Area: Visual Graph or Accessible List or 503 Offline State */}
       <div className="flex-1 min-h-0 relative flex overflow-hidden">
         
-        {!activeQuestion ? (
-          <div className="flex-1 flex flex-col items-center justify-center p-6 text-center z-10 space-y-4">
-            <div className="p-4 rounded-2xl bg-[#12130F] text-[#B9915E] border border-[#292A23] shadow-lg">
-              <Workflow className="w-10 h-10" />
-            </div>
-            <div className="max-w-md space-y-2">
-              <h2 className="text-xl font-bold font-sans text-[#F5F3ED]">Ask a question to explore its graph</h2>
-              <p className="text-xs font-mono text-[#A5A69D] leading-relaxed">
-                The graph will focus on the entity and decision connections related to your latest question.
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={onAskQuestion}
-              className="px-4 py-2 rounded-xl bg-[#12130F] hover:bg-[#1A1813] text-[#B9915E] border border-[#B9915E]/40 text-xs font-mono font-semibold transition-colors shadow-sm"
-            >
-              Go to Workspace
-            </button>
-          </div>
-        ) : !focusEntityId ? (
-          <div className="flex-1 flex flex-col items-center justify-center p-6 text-center z-10 space-y-4">
-            <div className="p-4 rounded-2xl bg-[#12130F] text-[#B9915E] border border-[#292A23] shadow-lg">
-              <GitFork className="w-10 h-10" />
-            </div>
-            <div className="max-w-md space-y-2">
-              <h2 className="text-xl font-bold font-sans text-[#F5F3ED]">No single entity to graph</h2>
-              <p className="text-xs font-mono text-[#A5A69D] leading-relaxed">
-                This question did not resolve to one code entity. Ask a question about a specific file, module, or configuration key to see its connected graph.
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={onAskQuestion}
-              className="px-4 py-2 rounded-xl bg-[#12130F] hover:bg-[#1A1813] text-[#B9915E] border border-[#B9915E]/40 text-xs font-mono font-semibold transition-colors shadow-sm"
-            >
-              Go to Workspace
-            </button>
+        {isLoading ? (
+          <div className="flex-1 flex flex-col items-center justify-center p-6 text-center z-10 space-y-3">
+            <Loader2 className="w-8 h-8 animate-spin text-[#757F6C]" />
+            <p className="text-xs font-mono text-[#A5A69D]">
+              Loading {focusEntityId ? 'focused subgraph' : 'repository graph'}...
+            </p>
           </div>
         ) : isGraphOffline ? (
           <div className="flex-1 flex flex-col items-center justify-center p-6 text-center z-10 space-y-4">
@@ -1002,7 +964,7 @@ export const GraphExplorerView: React.FC<GraphExplorerViewProps> = ({
               <button
                 onClick={() => {
                   setSimulateOffline(false);
-                  loadGraph(repoId, focusEntityId);
+                  setReloadToken((token) => token + 1);
                 }}
                 className="px-4 py-2 rounded-xl bg-[#12130F] hover:bg-[#1A1813] text-[#757F6C] border border-[#757F6C]/40 font-semibold transition-colors flex items-center gap-2 cursor-pointer shadow-sm"
               >
@@ -1019,11 +981,25 @@ export const GraphExplorerView: React.FC<GraphExplorerViewProps> = ({
             <button
               onClick={() => {
                 setFocusEntityId(null);
-                loadGraph(repoId, null);
+                setReloadToken((token) => token + 1);
               }}
               className="px-3 py-1.5 rounded-xl bg-[#12130F] text-[#A5A69D] border border-[#292A23] text-xs font-mono hover:text-[#F5F3ED]"
             >
               Return to Full Graph
+            </button>
+          </div>
+        ) : !graphData ? (
+          <div className="flex-1 flex flex-col items-center justify-center p-6 text-center z-10 space-y-3">
+            <GitFork className="w-8 h-8 text-[#8C806F]" />
+            <h3 className="text-sm font-bold text-[#F5F3ED] font-mono">No graph data returned</h3>
+            <p className="text-xs font-mono text-[#A5A69D] max-w-md">
+              This repository returned no nodes. Search for an entity, or reload the graph.
+            </p>
+            <button
+              onClick={() => setReloadToken((token) => token + 1)}
+              className="px-3 py-1.5 rounded-xl bg-[#12130F] text-[#A5A69D] border border-[#292A23] text-xs font-mono hover:text-[#F5F3ED]"
+            >
+              Reload Graph
             </button>
           </div>
         ) : viewMode === 'list' ? (

@@ -20,16 +20,12 @@ sys.path.insert(0, str(REPO_ROOT / "backend"))
 from app.schemas.ask import AskRequest
 from app.schemas.common import DecisionState
 from app.services.data_source import GraphDataSource
-from app.services.state import (
-    check_code_differs_from_latest,
-    compute_decision_states,
-)
+from app.services.state import compute_decision_states
 from app.services.supersession import (
     RULE_1_REVERT_COMMIT,
     RULE_2_CONFIG_KEY_CHANGED,
     SupersessionEdge,
 )
-from app.services.who_to_ask import determine_who_to_ask
 
 
 def main(argv: list[str] | None = None) -> int:
