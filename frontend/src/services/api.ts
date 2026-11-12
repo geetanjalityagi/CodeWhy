@@ -309,3 +309,40 @@ export async function fetchRepositoryGraphResult(
     return { status: 'error', message: msg };
   }
 }
+
+
+// ─── On-Demand Ingestion API ───────────────────────────────────────────────
+
+export interface IngestJobStatus {
+  job_id: string;
+  repo: string;
+  status: 'queued' | 'cloning' | 'fetching' | 'extracting' | 'building_graph' | 'done' | 'failed';
+  phase: string | null;
+  progress_pct: number;
+  started_at: string;
+  finished_at: string | null;
+  error: string | null;
+  result_repo_id: string | null;
+}
+
+export async function startIngest(repo: string, maxPrs = 100): Promise<IngestJobStatus> {
+  const res = await fetch('/api/v1/repositories/ingest', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({ repo, max_prs: maxPrs }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err?.detail ?? `HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function fetchIngestStatus(jobId: string): Promise<IngestJobStatus> {
+  const res = await fetch(`/api/v1/repositories/ingest/${jobId}`, {
+    headers: { Accept: 'application/json' },
+    signal: AbortSignal.timeout(5000),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}

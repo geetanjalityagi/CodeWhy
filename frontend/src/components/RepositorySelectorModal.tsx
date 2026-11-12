@@ -1,5 +1,7 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import type { Repository } from '../types';
+import { startIngest, fetchIngestStatus } from '../services/api';
+import type { IngestJobStatus } from '../services/api';
 import { 
   GitBranch, 
   Search, 
@@ -295,11 +297,63 @@ export const RepositorySelectorModal: React.FC<RepositorySelectorModalProps> = (
   repositories,
   selectedRepo,
   onSelectRepo,
+  onAddNewRepo,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [activeTab, setActiveTab] = useState<'existing' | 'custom'>('existing');
   const dialogRef = useRef<HTMLDivElement>(null);
   const onCloseRef = useRef(onClose);
+
+  // Ingest state
+  const [ingestRepo, setIngestRepo] = useState('');
+  const [ingestJobId, setIngestJobId] = useState<string | null>(null);
+  const [ingestStatus, setIngestStatus] = useState<IngestJobStatus | null>(null);
+  const [ingestError, setIngestError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const clearPolling = useCallback(() => {
+    if (intervalRef.current !== null) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
+  }, []);
+
+  // Polling effect
+  useEffect(() => {
+    if (!ingestJobId) return;
+    clearPolling();
+    intervalRef.current = setInterval(async () => {
+      try {
+        const status = await fetchIngestStatus(ingestJobId);
+        setIngestStatus(status);
+        if (status.status === 'done') {
+          clearPolling();
+          if (onAddNewRepo) {
+            onAddNewRepo({
+              id: status.result_repo_id ?? ingestRepo.replace('/', '-'),
+              name: ingestRepo,
+              url: `https://github.com/${ingestRepo}`,
+              counts: { decisions: 0, entities: 0, pull_requests: 0, commits: 0 },
+              fixture: false,
+            });
+          }
+          onClose();
+        } else if (status.status === 'failed') {
+          clearPolling();
+          setIngestError(status.error ?? 'Ingestion failed');
+        }
+      } catch (e) {
+        // transient poll error — keep polling
+        console.error('Ingest poll error', e);
+      }
+    }, 3000);
+    return clearPolling;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ingestJobId]);
+
+  // Cleanup on unmount
+  useEffect(() => clearPolling, [clearPolling]);
 
   useEffect(() => {
     onCloseRef.current = onClose;
@@ -424,12 +478,15 @@ export const RepositorySelectorModal: React.FC<RepositorySelectorModalProps> = (
             Available Repositories ({repositories.length})
           </button>
           <button
-            disabled
-            className="py-2.5 px-3 text-xs font-medium border-b-2 border-transparent text-[#929086] cursor-not-allowed flex items-center gap-1.5"
-            title="Repositories are ingested with scripts"
+            onClick={() => setActiveTab('custom')}
+            className={`py-2.5 px-3 text-xs font-medium border-b-2 transition-colors flex items-center gap-1.5 cursor-pointer ${
+              activeTab === 'custom'
+                ? 'border-[#718d5e] text-[#292b25]'
+                : 'border-transparent text-[#77776e] hover:text-[#292b25]'
+            }`}
           >
             <Plus className="w-3.5 h-3.5" />
-            Add Target (disabled)
+            Add Target
           </button>
         </div>
 
@@ -551,13 +608,72 @@ export const RepositorySelectorModal: React.FC<RepositorySelectorModalProps> = (
             </div>
           </div>
         ) : (
-          <div className='p-5 space-y-4'>
-            <div className='rounded-lg border border-[#d7d2c6] bg-[#f5f3ed] p-4 text-xs font-mono text-[#77776e]'>
-              <p className='font-semibold text-[#292b25] mb-2'>Repositories are ingested with scripts</p>
-              <p className='mb-2'>New repositories are added by running the ingest pipeline, not through the UI.</p>
-              <code className='block bg-[#fffdf8] border border-[#d7d2c6] rounded px-3 py-2 text-[#292b25]'>
-                python -m scripts.ingest --repo owner/repo
-              </code>
+          <div className="p-5 space-y-4">
+            <div className="space-y-3">
+              <div>
+                <label htmlFor="ingest-repo-input" className="block text-xs font-semibold text-[#292b25] mb-1.5">
+                  Add GitHub Repository
+                </label>
+                <input
+                  id="ingest-repo-input"
+                  type="text"
+                  placeholder="owner/repo (e.g. pallets/flask)"
+                  value={ingestRepo}
+                  onChange={(e) => {
+                    setIngestRepo(e.target.value);
+                    setIngestError(null);
+                  }}
+                  disabled={isSubmitting || !!ingestJobId}
+                  className="w-full px-3 py-2 bg-[#f5f3ed] border border-[#d7d2c6] rounded text-xs font-mono text-[#292b25] placeholder-[#929086] focus:outline-none focus:border-[#718d5e]"
+                />
+              </div>
+
+              <button
+                onClick={async () => {
+                  const repo = ingestRepo.trim();
+                  if (!repo || !repo.includes('/')) {
+                    setIngestError('Please enter a valid owner/repo (e.g. pallets/flask)');
+                    return;
+                  }
+                  setIngestError(null);
+                  setIsSubmitting(true);
+                  try {
+                    const job = await startIngest(repo);
+                    setIngestJobId(job.job_id);
+                    setIngestStatus(job);
+                  } catch (e) {
+                    setIngestError(e instanceof Error ? e.message : String(e));
+                  } finally {
+                    setIsSubmitting(false);
+                  }
+                }}
+                disabled={isSubmitting || !!ingestJobId || !ingestRepo.trim()}
+                className="px-4 py-2 bg-[#718d5e] text-white text-xs font-semibold rounded hover:bg-[#617c50] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isSubmitting ? 'Starting…' : 'Analyze Repository'}
+              </button>
+
+              {ingestError && (
+                <p className="text-red-600 text-xs font-mono">{ingestError}</p>
+              )}
+
+              {ingestStatus && ingestStatus.status !== 'failed' && (
+                <div className="space-y-2 pt-1">
+                  <div className="flex justify-between items-center text-xs font-mono text-[#77776e]">
+                    <span>{ingestStatus.phase ?? ingestStatus.status}</span>
+                    <span>{ingestStatus.progress_pct}%</span>
+                  </div>
+                  <div className="w-full bg-[#efede5] rounded-full h-2">
+                    <div
+                      className="bg-[#718d5e] h-2 rounded-full transition-all"
+                      style={{ width: `${ingestStatus.progress_pct}%` }}
+                    />
+                  </div>
+                  {ingestStatus.status === 'done' && (
+                    <p className="text-xs font-mono text-[#718d5e]">Done! Loading repository…</p>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         )}

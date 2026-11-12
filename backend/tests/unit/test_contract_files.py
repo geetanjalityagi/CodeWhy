@@ -43,6 +43,8 @@ EXPECTED_PATHS = {
     "/api/v1/repositories/{repository_id}/ask",
     "/api/v1/repositories/{repository_id}/graph",
     "/api/v1/repositories/{repository_id}/decisions",
+    "/api/v1/repositories/ingest",
+    "/api/v1/repositories/ingest/{job_id}",
     "/api/v1/decisions/{decision_id}",
 }
 
