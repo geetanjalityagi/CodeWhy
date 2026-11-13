@@ -931,13 +931,21 @@ class Neo4jGraphStore(BaseGraphStore):
 # ---------------------------------------------------------------------------
 
 def get_graph_store(cfg: Optional[Settings] = None) -> BaseGraphStore:
-    """Returns Neo4jGraphStore if credentials exist, otherwise InMemoryGraphStore."""
+    """Returns Neo4jGraphStore if credentials exist and reachable, otherwise InMemoryGraphStore."""
     config = cfg or settings
     if config.neo4j_uri and config.neo4j_username and config.neo4j_password:
-        return Neo4jGraphStore(
-            uri=config.neo4j_uri,
-            user=config.neo4j_username,
-            password=config.neo4j_password,
-            database=config.neo4j_database,
-        )
+        try:
+            store = Neo4jGraphStore(
+                uri=config.neo4j_uri,
+                user=config.neo4j_username,
+                password=config.neo4j_password,
+                database=config.neo4j_database,
+            )
+            store.driver.verify_connectivity()
+            return store
+        except Exception as exc:
+            logger.warning("Failed to connect to Neo4j (%s); falling back to InMemoryGraphStore", exc)
+            if not config.allow_mock_providers and not config.sqlite_cache_path:
+                raise
+            return InMemoryGraphStore()
     return InMemoryGraphStore()
